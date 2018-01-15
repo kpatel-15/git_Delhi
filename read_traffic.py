@@ -33,9 +33,8 @@ outputFile = sourcepath + '/bing_traffic.csv'
 f = open(outputFile,'w')
 f.write("# Traffic information for specific roads from HERE api. \n")
 
-outputFile2 = sourcepath + '/bing_shape_name.txt'
-read_df = pd.read_csv(outputFile2)
-read_df = read_df.loc[:, ~read_df.columns.str.contains('^Unnamed')]
+outputFile2 = sourcepath + '/bing_projected_shape.csv'
+read_df = pd.read_csv(outputFile2, index_col=0)
 
 big_df = pd.DataFrame()
 
