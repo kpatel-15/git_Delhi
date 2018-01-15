@@ -34,7 +34,7 @@ import sys
 import struct
 import gdal
 import math
-
+import ast
 
 
 ### SIMULATION PARAMETERS ######################################################################
@@ -50,11 +50,11 @@ roadWidth = 10.0
 # EF_traffic_urban = 0.15 * 0.455		# Typical urban emission factor [g NOx/km]
 # EF_population = 5e-9 * 0.170		# Emission factor relating population per hectare to emission rate [g NOx/s.m2]
 
-EF_traffic_highway = 2.12	# Typical highway emission factor [g NOx/km]
-EF_traffic_urban = 2.12		# Typical urban emission factor [g NOx/km]
+EF_traffic_highway = 0.000212	# Typical highway emission factor [g NOx/km]
+EF_traffic_urban = 0.000212		# Typical urban emission factor [g NOx/km]
 #EF_population = 0.000000158		# Emission factor relating population per hectare to emission rate [g NOx/s.m2]
 EF_population = 0.00000000158		# Emission factor relating population per hectare to emission rate [g NOx/s.m2]
-EF_powerplants = 1
+EF_powerplants = 0.1
 
 ### INPUT FILES ################################################################################
 
@@ -92,7 +92,7 @@ ozoneDefaultValue = 48.8
 # road segments from OpenStreetMaps, preprocessed with write_street_segments.py
 #streetFile_segment = "/usr/people/mijling/retina/github/data/osm/eindhoven_street_segments.csv"
 
-streetFile_segment = "/usr/people/patel/retina_delhi/test/source/streetfile/delhi_street_segments.csv"
+streetFile_segment = "/usr/people/patel/retina_delhi/test/source/streetfile/bing_traffic.csv"
 
 
 # Gridded population from CBS [100m], preprocessed with write_popdensity.py
@@ -106,6 +106,7 @@ populationFile = "/usr/people/patel/retina_delhi/test/source/population/smallgti
 
 trafficMotorwayFile = "/usr/people/patel/retina_delhi/test/source/traffic/traffic_motorway.csv"
 trafficPrimaryFile = "/usr/people/patel/retina_delhi/test/source/traffic/traffic_primary.csv"
+trafficFile = "/usr/people/patel/retina_delhi/test/source/traffic/bing_traffic.csv"
 
 # Powerplant emissions from DPCC website data + Delhi(2010) report + litreture (Arun Kansal et al.)
 powerplantFile = '/usr/people/patel/retina_delhi/test/source/powerplants/location_powerplant.csv'
@@ -257,18 +258,37 @@ def writeSourceDef_area(f, xGrid, yGrid, valGrid, leadingID):
 
 
 def writeSourceDef_line(f, df, leadingID):
-	"""
-	Write definition of LINE sources defined in dataframe df
-	The emission value set in SO SRCPARAM is a dummy value, as AERMOD reads it later from HOUREMIS
-	"""
-	sigmaZ0 = 2.0		# Initial vertical extension of concentration layer: 2m
-	emisHeight = 0.5	# Emission height (tailpipe heigth): 50 cm
+    """
+    Write definition of LINE sources defined in dataframe df
+    The emission value set in SO SRCPARAM is a dummy value, as AERMOD reads it later from HOUREMIS
+    """
+    sigmaZ0 = 2.0		# Initial vertical extension of concentration layer: 2m
+    emisHeight = 0.5	# Emission height (tailpipe heigth): 50 cm
+    count = 0
+    
+    for srcID, row in df.iterrows():
+        box = ast.literal_eval(row.delhi_coordinates)
+        if len(box) == 2:
+            count=count+1
+            f.write("SO location %8s line %d %d %d %d\n" % ("A%07d" % count, box[0][0], box[0][1], box[1][0], box[1][1]))
+            f.write("SO srcparam %8s %0.3e %0.2f %0.2f %0.2f\n" % ("A%07d" % count, row.emissions, emisHeight, roadWidth, sigmaZ0))
 
-	for srcID, row in df.iterrows():
-		emis = 1.0
-		f.write("SO location %8s line %d %d %d %d\n" % (srcID, row['x0'], row['y0'], row['x1'], row['y1']))
-		f.write("SO srcparam %8s %0.3e %0.2f %0.2f %0.2f\n" % (srcID, emis, emisHeight, roadWidth, sigmaZ0))
-	print "%s : %7d line sources found for %s group" % (me, len(df), leadingID)
+        elif len(box) % 2 == 0:
+            c = 0
+            for i in range(divmod(len(box),2)[0]):
+                count=count+1
+                f.write("SO location %8s line %d %d %d %d\n" % ("A%07d" % count, box[c][0], box[c][1], box[c+1][0], box[c+1][1]))
+                f.write("SO srcparam %8s %0.3e %0.2f %0.2f %0.2f\n" % ("A%07d" % count, row.emissions, emisHeight, roadWidth, sigmaZ0))
+                c = c +2
+        else:
+            c = 0
+            for i in range(divmod(len(box),2)[0]):
+                count=count+1
+                f.write("SO location %8s line %d %d %d %d\n" % ("A%07d" % count, box[c][0],box[c][1],box[c+1][0],box[c+1][1]))
+                f.write("SO srcparam %8s %0.3e %0.2f %0.2f %0.2f\n" % ("A%07d" % count, row.emissions, emisHeight, roadWidth, sigmaZ0))
+                c = c + 1
+
+    print "%s : %7d line sources found for %s group" % (me, len(df), leadingID)
 
 def writeSourceDef_point(f, df, leadingID):
 	"""
@@ -302,18 +322,33 @@ def writeHourlyEmis_area(f, dateTime, grid, emis):
 
 
 def writeHourlyEmis_line(f, dateTime, df, emis):
-	"""
-	Write LINE emissions for a given hour
-	All line sources will be attributed the same area emission rate [g NOx/s.m2]
-	"""
-	yymmddhh = aermodDate(dateTime)
-	y = int(yymmddhh[0:2])
-	m = int(yymmddhh[2:4])
-	d = int(yymmddhh[4:6])
-	h = int(yymmddhh[6:8])
+    """
+    Write LINE emissions for a given hour
+    All line sources will be attributed the same area emission rate [g NOx/s.m2]
+    """
+    yymmddhh = aermodDate(dateTime)
+    y = int(yymmddhh[0:2])
+    m = int(yymmddhh[2:4])
+    d = int(yymmddhh[4:6])
+    h = int(yymmddhh[6:8])
 
-	for srcID in df.index:
-		f.write("SO houremis  %2d %2d %2d %2d %s %0.3e\n" % (y,m,d,h, srcID, emis))
+    count = 0
+    for idx, row in df.iterrows():
+        box = ast.literal_eval(row.delhi_coordinates)
+        
+        if len(box) == 2:
+            count=count+1
+            f.write("SO houremis  %2d %2d %2d %2d %s %0.3e\n" % (y,m,d,h, "A%07d" % count, row.emissions))
+
+        elif len(box) % 2 == 0:
+            for i in range(divmod(len(box),2)[0]):
+                count=count+1
+                f.write("SO houremis  %2d %2d %2d %2d %s %0.3e\n" % (y,m,d,h, "A%07d" % count, row.emissions))
+
+        else:
+            for i in range(divmod(len(box),2)[0]):
+                count=count+1
+                f.write("SO houremis  %2d %2d %2d %2d %s %0.3e\n" % (y,m,d,h, "A%07d" % count, row.emissions))
 
 def writeHourlyEmis_point(f, dateTime, df, emis):
 	"""
@@ -473,25 +508,21 @@ def readpopulation():
 def writeEmissions(sourceDefFile, hourlyEmisFile, timeWindow):
 	"""
 	Write emission definition file [SO_sources] for 3 categories:
-	A: Motorway + Trunk roads (Line sources, 10m width)
-	B: Primary + Secondary + Tertiary roads (Line sources, 10m width)
+	A: Roadways (Line sources)
 	C: Populaton (Area sources 100 x 100m)
     D: Powerplants (Point sources)
 	Afterwards, the emission strength for each source is written for all hours in time window
 	"""
 
 	# Read coordinates of road segments for categories A and B
-	df_roads = pd.read_csv(streetFile_segment, header=17, index_col='roadType')
-	df_roads_A = df_roads[(df_roads.index>=1) & (df_roads.index<=3)].copy()
-	df_roads_B = df_roads[(df_roads.index>=4) & (df_roads.index<=5)].copy()
+	df_roads = pd.read_csv(streetFile_segment, skiprows=1, index_col=0)
+	emis = EF_traffic_highway * df_roads.jam_factor
+	df_roads['emissions'] = emis
 
-	# Assign unique IDs to road segments
-	lineID = ["A%07d" % (i+1) for i in range(len(df_roads_A))]
-	df_roads_A['lineID'] = lineID
-	df_roads_A.set_index('lineID', inplace=True)
-	lineID = ["B%07d" % (i+1) for i in range(len(df_roads_B))]
-	df_roads_B['lineID'] = lineID
-	df_roads_B.set_index('lineID', inplace=True)
+
+	df_roads['time'] = pd.to_datetime(df_roads['time'],format= '%H:%M:%S' ).dt.time
+
+	df_r = df_roads.loc[df_roads['time'] == datetime.time(0,0)]
 
 	# Read gridded population
 	(populationGrid, xPopulation, yPopulation) = readpopulation()
@@ -506,17 +537,17 @@ def writeEmissions(sourceDefFile, hourlyEmisFile, timeWindow):
 	df_traffic_primary.index = df_traffic_primary.index.tz_localize('utc')
 	df_traffic_motorway = df_traffic_motorway.reindex(timeWindow)				# Reindex, filling gaps with NaNs
 	df_traffic_primary = df_traffic_primary.reindex(timeWindow)
+	df_traffic = pd.read_csv(trafficFile, skiprows=1, index_col=0)
 
 	# Write definition of area sources (SO LOCATION and SO SRCPARAM)
 	f = open(sourceDefFile,'w')
 	f.write("** Emission sources for Delhi area on 25m resolution\n")
-	f.write("** A: Highways (line)\n")
-	f.write("** B: Primary + Secondary + Tertiary roads (line)\n")
+	f.write("** A: Roadways (line)\n")
 	f.write("** C: Population (area)\n")
 	f.write("** D: Powerplants (point)\n")
 	f.write("** written by %s\n" % sys.argv[0].split('/')[-1])
-	writeSourceDef_line(f, df_roads_A, 'A')
-	writeSourceDef_line(f, df_roads_B, 'B')
+
+	writeSourceDef_line(f, df_r, 'A')
 	gridC = writeSourceDef_area(f, xPopulation, yPopulation, populationGrid, 'C')
 	writeSourceDef_point(f, df_pp, 'D')
 	f.close()
@@ -527,10 +558,16 @@ def writeEmissions(sourceDefFile, hourlyEmisFile, timeWindow):
 	f = open(hourlyEmisFile,'w')
 	print "%s : Writing emissions to %s\n" % (me, hourlyEmisFile),
 	for dateTime in timeWindow:
+		print ('test dateTime', dateTime.time(), type(dateTime.time()))
+		readable = dateTime.time()
+		# Filter df by time stamp
+		df_roads['time'] = pd.to_datetime(df_roads['time'],format= '%H:%M:%S' ).dt.time
+		df_road = df_roads.loc[df_roads['time'] == readable]
 
 		flowA = df_traffic_motorway.loc[dateTime]['flow']		# Nr of vehicles in one hour [vehicle/h]
 		emisA = 0.001 * EF_traffic_highway * flowA / roadWidth	# Road segment emission [g NOx/h.m2]
 		emisA /= 3600.											# Road segment emission [g NOx/s.m2], scalar
+		emis = EF_traffic_highway * df_roads.jam_factor
 
 		flowB = df_traffic_primary.loc[dateTime]['flow']		# Nr of vehicles in one hour [vehicle/h]
 		emisB = 0.001 * EF_traffic_urban * flowB / roadWidth	# Road segment emission [g NOx/h.m2]
@@ -547,11 +584,11 @@ def writeEmissions(sourceDefFile, hourlyEmisFile, timeWindow):
 			emisC = np.zeros(emisC.shape)
 			emisD = np.zeros(emisD.shape)
 
-		writeHourlyEmis_line(f, dateTime, df_roads_A, emisA)
-		writeHourlyEmis_line(f, dateTime, df_roads_B, emisB)
+		writeHourlyEmis_line(f, dateTime, df_road, df_road.emissions)
 		writeHourlyEmis_area(f, dateTime, gridC, emisC)
 		writeHourlyEmis_point(f, dateTime, df_pp, emisD)
 	f.close()
+
 
 
 ### MAIN ##########################################################################################
